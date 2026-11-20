@@ -53,7 +53,7 @@ module.exports = async function handler(req, res) {
   const payload = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 150 }
+    generationConfig: { temperature: 0.7, maxOutputTokens: 1024 }
   };
 
   for (let i = 0; i < MODELS.length; i++) {
