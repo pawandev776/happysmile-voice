@@ -26,7 +26,7 @@ const SYSTEM_PROMPT = [
   '- Stay on the topic of dental care and this booking. Politely steer anything else back.'
 ].join('\n');
 
-const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest'];
+const MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview'];
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
