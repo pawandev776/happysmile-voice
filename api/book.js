@@ -60,10 +60,11 @@ module.exports = async function handler(req, res) {
 
   // 2. Build the .ics invite (30 minute visit, Asia/Kolkata).
   const dt = details.date.replace(/-/g, '') + 'T' + details.time.replace(':', '') + '00';
-  const endDate = new Date(details.date + 'T' + details.time + ':00+05:30');
-  endDate.setMinutes(endDate.getMinutes() + 30);
   const pad = function (n) { return String(n).padStart(2, '0'); };
-  const dtEnd = endDate.getFullYear() + pad(endDate.getMonth() + 1) + pad(endDate.getDate()) + 'T' + pad(endDate.getHours()) + pad(endDate.getMinutes()) + '00';
+  const tparts = details.time.split(':');
+  let eh = parseInt(tparts[0], 10), em = parseInt(tparts[1], 10) + 30;
+  if (em >= 60) { eh += 1; em -= 60; }
+  const dtEnd = details.date.replace(/-/g, '') + 'T' + pad(eh) + pad(em) + '00';
   const summary = 'HappySmile Dental - ' + concern;
   const location = 'HappySmile Dental Clinic, ' + area;
   const description = 'Booking for ' + name + (details.phone ? ' (phone ' + details.phone + ')' : '') + '. The HappySmile front desk will call to confirm.';
