@@ -26,7 +26,7 @@ const SYSTEM_PROMPT = [
   '- Stay on the topic of dental care and this booking. Politely steer anything else back.'
 ].join('\n');
 
-const MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview'];
+const MODELS = ['gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'];
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -53,7 +53,7 @@ module.exports = async function handler(req, res) {
   const payload = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 1024 }
+    generationConfig: { temperature: 0.7, maxOutputTokens: 400 }
   };
 
   for (let i = 0; i < MODELS.length; i++) {

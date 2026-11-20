@@ -273,32 +273,17 @@
   }
 
   // ---------- Call control ----------
+  var GREETING = 'Hi, this is Maya from HappySmile Dental. What dental concern can I help you with today?';
   function startCall() {
     inCall = true;
     endBtn.style.display = 'block';
     hintEl.textContent = 'Speak naturally. Maya listens after she finishes each sentence.';
     transcriptEl.innerHTML = '';
     history = [];
-    setStatus('Connecting you to Maya...');
-    // Kick off: Maya greets first.
-    fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ history: [], kickoff: true })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        var reply = (j && j.reply) || 'Hi, this is Maya from HappySmile Dental. How can I help you today?';
-        history.push({ role: 'model', text: reply });
-        addBubble('Maya', reply);
-        speak(reply, function () { if (inCall) startListening(); });
-      })
-      .catch(function () {
-        var reply = 'Hi, this is Maya from HappySmile Dental. How can I help you today?';
-        history.push({ role: 'model', text: reply });
-        addBubble('Maya', reply);
-        speak(reply, function () { if (inCall) startListening(); });
-      });
+    // Greeting is local: Maya speaks the instant the call starts, no network wait.
+    history.push({ role: 'model', text: GREETING });
+    addBubble('Maya', GREETING);
+    speak(GREETING, function () { if (inCall) startListening(); });
   }
 
   function endCall() {
@@ -331,6 +316,9 @@
   if (!SR) {
     hintEl.textContent = 'This browser has no speech recognition, so type below. For the full voice call, open in Chrome or Edge.';
   }
+
+  // Pre-warm the serverless brain while the visitor reads the page.
+  try { fetch('/api/chat', { method: 'OPTIONS' }).catch(function () {}); } catch (e) {}
 })();
 </script>
 </body>
