@@ -68,6 +68,16 @@
   }
   .btn-send { background: #34d399; color: #052e21; }
   .btn-end { background: transparent; border: 1px solid #e0705f; color: #ff9d8f; width: 100%; margin-top: 12px; display: none; }
+  .bookcard {
+    width: 100%; margin-top: 12px; padding: 14px 16px; border-radius: 14px;
+    background: #0f4436; border: 1px solid #2c6b57; font-size: 14px; line-height: 1.55; display: none;
+  }
+  .bookcard .ok { color: #7fe9c0; font-weight: 600; }
+  .bookcard .bad { color: #ffb0a2; font-weight: 600; }
+  .bookcard a {
+    display: inline-block; margin-top: 8px; padding: 9px 16px; border-radius: 999px;
+    background: #34d399; color: #052e21; font-weight: 600; text-decoration: none; font-size: 14px;
+  }
   footer { text-align: center; color: #6ba590; font-size: 12px; padding-top: 14px; line-height: 1.6; }
 </style>
 </head>
@@ -93,6 +103,7 @@
     <input id="typed" type="text" placeholder="Or type your answer here..." autocomplete="off">
     <button class="btn btn-send" id="sendBtn" type="button">Send</button>
   </div>
+  <div class="bookcard" id="bookcard"></div>
   <button class="btn btn-end" id="endBtn" type="button">End call</button>
 
   <footer>
@@ -136,7 +147,45 @@
 
   function setBubbleText(b, text) { b.lastChild.textContent = text; scrollDown(); }
 
-  // ---------- Text to speech ----------
+  // ---------- Voice: neural Gemini TTS with browser-speech fallback ----------
+  var audioCtx = null;
+  var currentSource = null;
+  var greetingBlobPromise = null;
+
+  function fetchTtsBlob(text) {
+    return fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('tts ' + r.status);
+      return r.blob();
+    });
+  }
+
+  function stopAudio() {
+    if (currentSource) { try { currentSource.stop(); } catch (e) {} currentSource = null; }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+  }
+
+  function playBlob(blob, ondone) {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      blob.arrayBuffer().then(function (buf) {
+        audioCtx.decodeAudioData(buf, function (audioBuf) {
+          if (!inCall || !speaking) { ondone && ondone(); return; }
+          var src = audioCtx.createBufferSource();
+          src.buffer = audioBuf;
+          src.connect(audioCtx.destination);
+          currentSource = src;
+          src.onended = function () { currentSource = null; ondone && ondone(); };
+          src.start();
+        }, function () { ondone && ondone(); });
+      }).catch(function () { ondone && ondone(); });
+    } catch (e) { ondone && ondone(); }
+  }
+
+  // Browser speech fallback: pick the most natural female voice available.
   var voices = [];
   function loadVoices() { voices = window.speechSynthesis ? speechSynthesis.getVoices() : []; }
   if (window.speechSynthesis) {
@@ -144,6 +193,8 @@
     speechSynthesis.onvoiceschanged = loadVoices;
   }
   function pickVoice() {
+    var female = voices.find(function (x) { return /female|samantha|veena|zira|aria|jenny|natasha|sonia|heera|kalpana|swara|lekha|aditi|raveena/i.test(x.name); });
+    if (female) return female;
     var pref = ['en-IN', 'en_IN', 'en-GB', 'en-US'];
     for (var i = 0; i < pref.length; i++) {
       var v = voices.find(function (x) { return x.lang && x.lang.replace('_', '-').indexOf(pref[i]) === 0; });
@@ -152,30 +203,65 @@
     return null;
   }
 
-  function speak(text, ondone) {
+  function speakFallback(text, ondone) {
     if (!window.speechSynthesis) { ondone && ondone(); return; }
-    speechSynthesis.cancel();
-    var chunks = text.match(/[^.!?]+[.!?]*/g) || [text];
-    var idx = 0;
+    var u = new SpeechSynthesisUtterance(text);
+    var v = pickVoice(); if (v) u.voice = v;
+    u.lang = (v && v.lang) || 'en-IN';
+    u.rate = 0.98; u.pitch = 1.1;
+    u.onend = function () { ondone && ondone(); };
+    u.onerror = function () { ondone && ondone(); };
+    speechSynthesis.speak(u);
+  }
+
+  // Speak a reply: neural voice per sentence, chained; whole-text fallback if TTS is down.
+  function speak(text, ondone) {
+    stopAudio();
     speaking = true;
     orb.classList.add('speaking');
     setStatus('Maya is speaking...');
+    var finish = function () {
+      speaking = false;
+      orb.classList.remove('speaking');
+      ondone && ondone();
+    };
+    var chunks = (text.match(/[^.!?]+[.!?]*/g) || [text]).map(function (s) { return s.trim(); }).filter(Boolean);
+    var queue = chunks.slice();
+    var failed = false;
     function next() {
-      if (idx >= chunks.length || !inCall) {
-        speaking = false;
-        orb.classList.remove('speaking');
-        ondone && ondone();
-        return;
-      }
-      var u = new SpeechSynthesisUtterance(chunks[idx++].trim());
-      var v = pickVoice(); if (v) u.voice = v;
-      u.lang = (v && v.lang) || 'en-IN';
-      u.rate = 1.0; u.pitch = 1.05;
-      u.onend = next;
-      u.onerror = next;
-      speechSynthesis.speak(u);
+      if (!queue.length || !inCall || !speaking) { finish(); return; }
+      var sentence = queue.shift();
+      fetchTtsBlob(sentence)
+        .then(function (blob) { playBlob(blob, next); })
+        .catch(function () {
+          if (failed) { finish(); return; }
+          failed = true;
+          // Neural TTS unavailable (quota/offline): say the rest with the browser voice.
+          speakFallback([sentence].concat(queue).join(' '), finish);
+          queue = [];
+        });
     }
     next();
+  }
+
+  // Speak the pre-warmed greeting instantly, falling back to browser voice.
+  function speakGreeting(text, ondone) {
+    stopAudio();
+    speaking = true;
+    orb.classList.add('speaking');
+    setStatus('Maya is speaking...');
+    var finish = function () {
+      speaking = false;
+      orb.classList.remove('speaking');
+      ondone && ondone();
+    };
+    var play = function (blob) { if (blob) { playBlob(blob, finish); } else { speakFallback(text, finish); } };
+    if (greetingBlobPromise) {
+      Promise.race([greetingBlobPromise, new Promise(function (r) { setTimeout(function () { r(null); }, 1500); })])
+        .then(play).catch(function () { speakFallback(text, finish); });
+    } else {
+      speakFallback(text, finish);
+    }
   }
 
   // ---------- Speech recognition ----------
@@ -245,7 +331,7 @@
   var busy = false;
   function handleUser(text) {
     if (!text || busy) return;
-    if (speaking && window.speechSynthesis) speechSynthesis.cancel(); // barge-in
+    if (speaking) stopAudio(); // barge-in
     busy = true;
     addBubble('You', text);
     history.push({ role: 'user', text: text });
@@ -263,12 +349,58 @@
         history.push({ role: 'model', text: reply });
         addBubble('Maya', reply);
         speak(reply, function () { if (inCall) startListening(); });
+        var em = extractEmail(text);
+        if (em) sendInvite(em);
       })
       .catch(function () {
         busy = false;
         var reply = 'I had a small hiccup on my end. Could you repeat that?';
         addBubble('Maya', reply);
         speak(reply, function () { if (inCall) startListening(); });
+      });
+  }
+
+  // ---------- Invite delivery ----------
+  var bookcard = document.getElementById('bookcard');
+  var inviteSent = false;
+
+  function extractEmail(t) {
+    var norm = (' ' + t.toLowerCase() + ' ')
+      .replace(/\s+at\s+/g, '@')
+      .replace(/\s+dot\s+/g, '.')
+      .replace(/\s+/g, '');
+    var m = norm.match(/[^\s@]+@[^\s@]+\.[^\s@]{2,}/);
+    return m ? m[0] : null;
+  }
+
+  function sendInvite(email) {
+    if (inviteSent) return;
+    inviteSent = true;
+    bookcard.style.display = 'block';
+    bookcard.innerHTML = 'Sending your calendar invite to <b>' + email + '</b>...';
+    fetch('/api/book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history: history, email: email })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var html = '';
+        if (j && j.sent) {
+          html += '<span class="ok">Invite emailed to ' + email + '</span> (check spam just in case). ';
+        } else {
+          html += '<span class="bad">Email delivery did not go through' + (j && j.sendError ? ': ' + j.sendError : '') + '.</span> '; 
+        }
+        if (j && j.when) html += 'Booked: ' + (j.concern || 'visit') + ', ' + j.clinic + ' clinic, ' + j.when + ' IST. ';
+        if (j && j.calendarUrl) {
+          html += '<br><a href="' + j.calendarUrl + '" target="_blank" rel="noopener">Add to Google Calendar</a>';
+          var waText = 'HappySmile Dental: your ' + (j.concern || 'visit') + ' at the ' + j.clinic + ' clinic is booked for ' + j.when + ' IST. Add to calendar: ' + j.calendarUrl;
+          html += ' <a href="https://wa.me/?text=' + encodeURIComponent(waText) + '" target="_blank" rel="noopener">Send to my WhatsApp</a>';
+        }
+        bookcard.innerHTML = html;
+      })
+      .catch(function () {
+        bookcard.innerHTML = '<span class="bad">Could not reach the booking service. The front desk will still call to confirm.</span>';
       });
   }
 
@@ -280,16 +412,19 @@
     hintEl.textContent = 'Speak naturally. Maya listens after she finishes each sentence.';
     transcriptEl.innerHTML = '';
     history = [];
-    // Greeting is local: Maya speaks the instant the call starts, no network wait.
+    inviteSent = false;
+    bookcard.style.display = 'none';
+    bookcard.innerHTML = '';
+    if (audioCtx && audioCtx.state === 'suspended') { audioCtx.resume().catch(function () {}); }
     history.push({ role: 'model', text: GREETING });
     addBubble('Maya', GREETING);
-    speak(GREETING, function () { if (inCall) startListening(); });
+    speakGreeting(GREETING, function () { if (inCall) startListening(); });
   }
 
   function endCall() {
     inCall = false;
     stopListening();
-    if (window.speechSynthesis) speechSynthesis.cancel();
+    stopAudio();
     speaking = false; busy = false;
     orb.classList.remove('speaking');
     endBtn.style.display = 'none';
@@ -317,8 +452,10 @@
     hintEl.textContent = 'This browser has no speech recognition, so type below. For the full voice call, open in Chrome or Edge.';
   }
 
-  // Pre-warm the serverless brain while the visitor reads the page.
+  // Pre-warm the serverless brain and pre-generate the greeting audio while the visitor reads the page.
   try { fetch('/api/chat', { method: 'OPTIONS' }).catch(function () {}); } catch (e) {}
+  var GREETING_TEXT = 'Hi, this is Maya from HappySmile Dental. What dental concern can I help you with today?';
+  try { greetingBlobPromise = fetchTtsBlob(GREETING_TEXT).catch(function () { return null; }); } catch (e) {}
 })();
 </script>
 </body>
